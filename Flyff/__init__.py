@@ -9,7 +9,7 @@ from time import sleep
 from ctypes import *
 from ctypes.wintypes import *
 
-version = "0.1.2"
+version = "0.1.3"
 
 keys = {"F1": win32con.VK_F1,
         "F2": win32con.VK_F2,
