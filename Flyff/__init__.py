@@ -6,10 +6,9 @@ from win32gui import (PostMessage, IsWindowVisible,
                       GetWindowRect)
 from win32process import GetWindowThreadProcessId
 from time import sleep
-from ctypes import *
-from ctypes.wintypes import *
+from ctypes import (c_char_p, c_ulong, byref, windll)
 
-version = "0.1.3"
+version = "0.1.4"
 
 keys = {"F1": win32con.VK_F1,
         "F2": win32con.VK_F2,
@@ -21,6 +20,99 @@ keys = {"F1": win32con.VK_F1,
         "F8": win32con.VK_F8,
         "F9": win32con.VK_F9,
         }
+
+class Client():
+    def __init__(self, pid):
+        self.pid = pid
+        self.hwnd = self.get_hwnds()
+        self.name = self.get_name()
+        self.res, self.x, self.y = self.get_res()
+        self.offset = self.get_offset()
+        
+    def __repr__(self):
+        return '<Flyff.Client %s>' % self.pid
+    
+    def get_hwnds(self):
+        """
+        Get the hWnd values from the process ID (Flyff only has one hWnd per 
+        process).
+        """
+        def callback(hwnd, hwnds):
+            if IsWindowVisible (hwnd) and IsWindowEnabled(hwnd):
+                _, found_pid = GetWindowThreadProcessId(hwnd)
+                if found_pid == self.pid:
+                    hwnds.append(hwnd)
+                    return True
+    
+        hwnds = []
+        EnumWindows(callback, hwnds)
+        return hwnds[0]
+    
+    def get_name(self):
+        """
+        Slightly buggy, but mostly working read of a client's logged in 
+        character name. Only tested on a single server, so it might not
+        work at all elsewhere (yet)
+        """
+        OpenProcess = windll.kernel32.OpenProcess
+        ReadProcessMemory = windll.kernel32.ReadProcessMemory
+        CloseHandle = windll.kernel32.CloseHandle
+
+        PROCESS_ALL_ACCESS = 0x1F0FFF
+
+        address = 0x001871F9
+
+        buf = c_char_p(b'\x00' * 16)
+        bufferSize = 16
+        bytesRead = c_ulong(0)
+
+        processHandle = OpenProcess(PROCESS_ALL_ACCESS, False, self.pid)
+        if ReadProcessMemory(processHandle, address, buf, bufferSize, byref(bytesRead)):
+            name = buf.value.strip(b'\x06')
+            if len(name) == 0:
+                name = 'Character not found (not logged in?)'
+        else:
+            name = 'Character not found (not logged in?)'
+        CloseHandle(processHandle)
+        return name
+    
+    
+    def get_res(self):
+        """
+        Get coordinates and a value to look up offsets within the client for
+        collectors.
+        """
+        rect = GetWindowRect(self.hwnd)
+        x, y, w, h = rect[0], rect[1], rect[2], rect[3]
+        res = ((w - x) + (h - y))
+        return res, x, y
+
+    def get_offset(self):
+        """
+        Get coordinate offsets for the confirmation button when using batteries.
+        It uses a window's height + width, named res for lookup-purposes, and
+        a match has to be within 5 of what I get on Windows 7. W10 seems to get 
+        slightly different values.
+        These values may be broken for certain clients, and needs revising.
+        """
+        offset_list = [ (1434, (350, 360)), # 800x600
+                        (1826, (465, 445)), # 1024x768
+                        (2034, (590, 420)), # 1280x720 
+                        (2082, (590, 445)), # 1280x768 
+                        (2114, (590, 460)), # 1280x800 
+                        (2162, (630, 445)), # 1360x768 
+                        (2338, (590, 570)), # 1280x1024 
+                        (2390, (670, 510)), # 1440x900
+                        (2484, (650, 585)), # 1400x1050 
+                        (2534, (750, 510)), # 1600x900 
+                        (2698, (750, 595)), # 1600x1200 
+                        (2764, (790, 585)), # 1680x1050 
+                        (3018, (910, 595)) # 1920x1080 
+                        ]
+        for offset_tuple in offset_list:
+            if offset_tuple[0]-5 <= self.res <= offset_tuple[0]+5:
+                offset = offset_tuple[1]
+                return offset
 
 def get_process(n):
     """
@@ -34,22 +126,6 @@ def get_process(n):
         if process.name == n:
             pids.append(process.ProcessId)
     return pids
-
-def get_hwnds(pid):
-    """
-    Get the hWnd values from the process ID (Flyff only has one hWnd per 
-    process).
-    """
-    def callback(hwnd, hwnds):
-        if IsWindowVisible (hwnd) and IsWindowEnabled(hwnd):
-            _, found_pid = GetWindowThreadProcessId(hwnd)
-            if found_pid == pid:
-                hwnds.append(hwnd)
-                return True
-    
-    hwnds = []
-    EnumWindows(callback, hwnds)
-    return hwnds[0]
 
 def push_button(hwnd, key):
     """
@@ -67,68 +143,3 @@ def click_mouse(hwnd, tx, ty):
     SetCursorPos((tx, ty)) # should be the same for any resolution
     PostMessage(hwnd, win32con.WM_LBUTTONDOWN, 0, 0)
     PostMessage(hwnd, win32con.WM_LBUTTONUP, 0, 0)
-
-def get_name(pid):
-    """
-    Slightly buggy, but mostly working read of a client's logged in 
-    character name. Only tested on a single server, so it might not
-    work at all elsewhere (yet)
-    """
-    OpenProcess = windll.kernel32.OpenProcess
-    ReadProcessMemory = windll.kernel32.ReadProcessMemory
-    CloseHandle = windll.kernel32.CloseHandle
-
-    PROCESS_ALL_ACCESS = 0x1F0FFF
-
-    address = 0x00C81E09
-
-    buf = c_char_p("abcdef0123456789")
-    bufferSize = 16
-    bytesRead = c_ulong(0)
-
-    processHandle = OpenProcess(PROCESS_ALL_ACCESS, False, pid)
-    if ReadProcessMemory(processHandle, address, buf, bufferSize, byref(bytesRead)):
-        name = buf.value.strip('\x06')
-        if len(name) == 0:
-            name = 'Character not found (not logged in?)'
-    else:
-        name = 'Character not found (not logged in?)'
-    CloseHandle(processHandle)
-    return name
-
-def get_res(hwnd):
-    """
-    Get coordinates and a value to look up offsets within the client for
-    collectors.
-    """
-    rect = GetWindowRect(hwnd)
-    x, y, w, h = rect[0], rect[1], rect[2], rect[3]
-    res = ((w - x) + (h - y))
-    return res, x, y
-
-def get_offset(res):
-    """
-    Get coordinate offsets for the confirmation button when using batteries.
-    It uses a window's height + width, named res for lookup-purposes, and
-    a match has to be within 5 of what I get on Windows 7. W10 seems to get 
-    slightly different values.
-    These values may be broken for certain clients, and needs revising.
-    """
-    offset_list = [(1434, (350, 360)), # 800x600
-                   (1826, (465, 445)), # 1024x768
-                   (2034, (590, 420)), # 1280x720 
-                   (2082, (590, 445)), # 1280x768 
-                   (2114, (590, 460)), # 1280x800 
-                   (2162, (630, 445)), # 1360x768 
-                   (2338, (590, 570)), # 1280x1024 
-                   (2390, (670, 510)), # 1440x900
-                   (2484, (650, 585)), # 1400x1050 
-                   (2534, (750, 510)), # 1600x900 
-                   (2698, (750, 595)), # 1600x1200 
-                   (2764, (790, 585)), # 1680x1050 
-                   (3018, (910, 595)) # 1920x1080 
-                   ]
-    for offset_tuple in offset_list:
-        if offset_tuple[0]-5 <= res <= offset_tuple[0]+5:
-            offset = offset_tuple[1]
-            return offset
