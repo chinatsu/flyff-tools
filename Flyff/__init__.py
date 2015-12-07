@@ -3,12 +3,13 @@ import win32con
 from win32api import SetCursorPos
 from win32gui import (PostMessage, IsWindowVisible, 
                       IsWindowEnabled, EnumWindows,
-                      GetWindowRect)
+                      GetWindowRect, IsIconic,
+                      ShowWindow, CloseWindow)
 from win32process import GetWindowThreadProcessId
 from time import sleep
 from ctypes import (c_char_p, c_ulong, byref, windll)
 
-version = "0.1.4"
+version = "0.1.5"
 
 keys = {"F1": win32con.VK_F1,
         "F2": win32con.VK_F2,
@@ -22,20 +23,23 @@ keys = {"F1": win32con.VK_F1,
         }
 
 class Client():
+    """
+    A Flyff client object with hwnd attribute for handling sending keys to a
+    window, and name attribute displaying the logged in character name for
+    easy identification (PIDs and hWnds aren't very identifiable).
+    """
     def __init__(self, pid):
         self.pid = pid
         self.hwnd = self.get_hwnds()
         self.name = self.get_name()
-        self.res, self.x, self.y = self.get_res()
-        self.offset = self.get_offset()
-        
+
     def __repr__(self):
         return '<Flyff.Client %s>' % self.pid
     
     def get_hwnds(self):
         """
         Get the hWnd values from the process ID (Flyff only has one hWnd per 
-        process).
+        process, so we just return the one).
         """
         def callback(hwnd, hwnds):
             if IsWindowVisible (hwnd) and IsWindowEnabled(hwnd):
@@ -52,7 +56,10 @@ class Client():
         """
         Slightly buggy, but mostly working read of a client's logged in 
         character name. Only tested on a single server, so it might not
-        work at all elsewhere (yet)
+        work at all elsewhere (yet).
+        The address variable isn't very reliable, as it seems it changes
+        between patches, and thus very likely across different clients.
+        TODO: Find a good pointer address for this purpose, I guess.
         """
         OpenProcess = windll.kernel32.OpenProcess
         ReadProcessMemory = windll.kernel32.ReadProcessMemory
@@ -60,7 +67,7 @@ class Client():
 
         PROCESS_ALL_ACCESS = 0x1F0FFF
 
-        address = 0x001871F9
+        address = 0x00C81E41
 
         buf = c_char_p(b'\x00' * 16)
         bufferSize = 16
@@ -68,51 +75,53 @@ class Client():
 
         processHandle = OpenProcess(PROCESS_ALL_ACCESS, False, self.pid)
         if ReadProcessMemory(processHandle, address, buf, bufferSize, byref(bytesRead)):
-            name = buf.value.strip(b'\x06')
+            name = buf.value.strip(b'\x06').split(' ')[0]
             if len(name) == 0:
                 name = 'Character not found (not logged in?)'
         else:
             name = 'Character not found (not logged in?)'
         CloseHandle(processHandle)
         return name
-    
-    
-    def get_res(self):
-        """
-        Get coordinates and a value to look up offsets within the client for
-        collectors.
-        """
-        rect = GetWindowRect(self.hwnd)
-        x, y, w, h = rect[0], rect[1], rect[2], rect[3]
-        res = ((w - x) + (h - y))
-        return res, x, y
 
-    def get_offset(self):
-        """
-        Get coordinate offsets for the confirmation button when using batteries.
-        It uses a window's height + width, named res for lookup-purposes, and
-        a match has to be within 5 of what I get on Windows 7. W10 seems to get 
-        slightly different values.
-        These values may be broken for certain clients, and needs revising.
-        """
+class Collector():
+    """
+    A collector object, with the same attributes as a Client object and some
+    coordinates and offsets related to collecting.
+    """
+    def __init__(self, client):
+        self.hwnd = client.hwnd
+        self.pid = client.pid
+        self.name = client.name
+        
+        if IsIconic(self.hwnd):
+            ShowWindow(self.hwnd, win32con.SW_RESTORE)
+        rect = GetWindowRect(self.hwnd)
+        self.x, self.y, w, h = rect[0], rect[1], rect[2], rect[3]
+        res = ((w - self.x) + (h - self.y))
+        CloseWindow(self.hwnd)
+        
         offset_list = [ (1434, (350, 360)), # 800x600
                         (1826, (465, 445)), # 1024x768
-                        (2034, (590, 420)), # 1280x720 
-                        (2082, (590, 445)), # 1280x768 
-                        (2114, (590, 460)), # 1280x800 
-                        (2162, (630, 445)), # 1360x768 
-                        (2338, (590, 570)), # 1280x1024 
+                        (2034, (590, 420)), # 1280x720
+                        (2082, (590, 445)), # 1280x768
+                        (2114, (590, 460)), # 1280x800
+                        (2162, (630, 445)), # 1360x768
+                        (2338, (590, 570)), # 1280x1024
                         (2390, (670, 510)), # 1440x900
-                        (2484, (650, 585)), # 1400x1050 
-                        (2534, (750, 510)), # 1600x900 
-                        (2698, (750, 595)), # 1600x1200 
-                        (2764, (790, 585)), # 1680x1050 
-                        (3018, (910, 595)) # 1920x1080 
+                        (2484, (650, 585)), # 1400x1050
+                        (2534, (750, 510)), # 1600x900
+                        (2698, (750, 595)), # 1600x1200
+                        (2764, (790, 585)), # 1680x1050
+                        (3018, (910, 595)) # 1920x1080
                         ]
         for offset_tuple in offset_list:
-            if offset_tuple[0]-5 <= self.res <= offset_tuple[0]+5:
-                offset = offset_tuple[1]
-                return offset
+            if offset_tuple[0]-5 <= res <= offset_tuple[0]+5:
+                self.offset = offset_tuple[1]
+                return
+            
+    def __repr__(self):
+        return '<Flyff.Collector %s>' % self.pid
+    
 
 def get_process(n):
     """
@@ -132,7 +141,7 @@ def push_button(hwnd, key):
     Sends a key to a specified hwnd.
     """
     PostMessage(hwnd, win32con.WM_KEYDOWN, key, 0)
-    sleep(0.3)
+    sleep(0.3) # a little timeout seems to be needed for the key to register
     PostMessage(hwnd, win32con.WM_KEYUP, key, 0)
 
 def click_mouse(hwnd, tx, ty):
