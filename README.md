@@ -7,5 +7,5 @@ Python 2.7
 
 pywin32
 
-wmi
+psutil
 

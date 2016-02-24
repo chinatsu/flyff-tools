@@ -4,12 +4,13 @@ from win32api import SetCursorPos
 from win32gui import (PostMessage, IsWindowVisible, 
                       IsWindowEnabled, EnumWindows,
                       GetWindowRect, IsIconic,
-                      ShowWindow, CloseWindow)
+                      ShowWindow, CloseWindow, GetWindowText)
 from win32process import GetWindowThreadProcessId
+from psutil import process_iter
 from time import sleep
 from ctypes import (c_char_p, c_ulong, byref, windll)
 
-version = "0.1.5"
+version = "0.1.6"
 
 keys = {"F1": win32con.VK_F1,
         "F2": win32con.VK_F2,
@@ -52,36 +53,44 @@ class Client():
         EnumWindows(callback, hwnds)
         return hwnds[0]
     
+    #def get_name(self):
+    #    """
+    #    Slightly buggy, but mostly working read of a client's logged in 
+    #    character name. Only tested on a single server, so it might not
+    #    work at all elsewhere (yet).
+    #    The address variable isn't very reliable, as it seems it changes
+    #    between patches, and thus very likely different across different clients.
+    #    TODO: Find a robust pointer address for this purpose, I guess.
+    #    """
+    #    OpenProcess = windll.kernel32.OpenProcess
+    #    ReadProcessMemory = windll.kernel32.ReadProcessMemory
+    #    CloseHandle = windll.kernel32.CloseHandle
+
+    #    PROCESS_ALL_ACCESS = 0x1F0FFF
+
+    #    address = 0x00187E59
+
+    #    buf = c_char_p(b'\x00' * 16)
+    #    bufferSize = 16
+    #    bytesRead = c_ulong(0)
+
+    #    processHandle = OpenProcess(PROCESS_ALL_ACCESS, False, self.pid)
+    #    if ReadProcessMemory(processHandle, 
+    #                         address, buf, bufferSize, byref(bytesRead)):
+    #        name = buf.value.strip(b'\x06').split(' ')[0]
+    #        if len(name) == 0:
+    #            name = 'Character not found (not logged in?)'
+    #    else:
+    #        name = 'Character not found (not logged in?)'
+    #    CloseHandle(processHandle)
+    #    return name
+    
     def get_name(self):
         """
-        Slightly buggy, but mostly working read of a client's logged in 
-        character name. Only tested on a single server, so it might not
-        work at all elsewhere (yet).
-        The address variable isn't very reliable, as it seems it changes
-        between patches, and thus very likely across different clients.
-        TODO: Find a good pointer address for this purpose, I guess.
+        A certain server has character names in their title, how convenient.
+        I'll be using their client to test some things for now.
         """
-        OpenProcess = windll.kernel32.OpenProcess
-        ReadProcessMemory = windll.kernel32.ReadProcessMemory
-        CloseHandle = windll.kernel32.CloseHandle
-
-        PROCESS_ALL_ACCESS = 0x1F0FFF
-
-        address = 0x00C81E41
-
-        buf = c_char_p(b'\x00' * 16)
-        bufferSize = 16
-        bytesRead = c_ulong(0)
-
-        processHandle = OpenProcess(PROCESS_ALL_ACCESS, False, self.pid)
-        if ReadProcessMemory(processHandle, address, buf, bufferSize, byref(bytesRead)):
-            name = buf.value.strip(b'\x06').split(' ')[0]
-            if len(name) == 0:
-                name = 'Character not found (not logged in?)'
-        else:
-            name = 'Character not found (not logged in?)'
-        CloseHandle(processHandle)
-        return name
+        return GetWindowText(self.hwnd).split(' ')[0]
 
 class Collector():
     """
@@ -100,6 +109,7 @@ class Collector():
         res = ((w - self.x) + (h - self.y))
         CloseWindow(self.hwnd)
         
+        # offset_list is still shit, remind me to fix it
         offset_list = [ (1434, (350, 360)), # 800x600
                         (1826, (465, 445)), # 1024x768
                         (2034, (590, 420)), # 1280x720
@@ -124,16 +134,10 @@ class Collector():
     
 
 def get_process(n):
-    """
-    Get all processes with the specified name and return their process IDs in
-    a list.
-    """
-    c = wmi.WMI()
     pids = []
-    print "Mapping processes..."
-    for process in c.Win32_Process():
-        if process.name == n:
-            pids.append(process.ProcessId)
+    for proc in process_iter():
+        if proc.name() == n:
+            pids.append(proc.pid)
     return pids
 
 def push_button(hwnd, key):
@@ -141,7 +145,7 @@ def push_button(hwnd, key):
     Sends a key to a specified hwnd.
     """
     PostMessage(hwnd, win32con.WM_KEYDOWN, key, 0)
-    sleep(0.3) # a little timeout seems to be needed for the key to register
+    sleep(0.3) # a small timeout seems to be needed for the key to register
     PostMessage(hwnd, win32con.WM_KEYUP, key, 0)
 
 def click_mouse(hwnd, tx, ty):
