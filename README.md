@@ -6,6 +6,3 @@ Halfassed attempt at certain automation tasks for Flyff
 Python 2.7
 
 pywin32
-
-psutil
-

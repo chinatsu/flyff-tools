@@ -1,14 +1,12 @@
-import wmi
 import win32con
 from win32api import SetCursorPos
 from win32gui import (PostMessage, IsWindowVisible, 
                       IsWindowEnabled, EnumWindows,
                       GetWindowRect, IsIconic,
                       ShowWindow, CloseWindow, GetWindowText)
-from win32process import GetWindowThreadProcessId
-from psutil import process_iter
+from win32process import GetWindowThreadProcessId, EnumProcesses
 from time import sleep
-from ctypes import (c_char_p, c_ulong, byref, windll)
+from ctypes import (c_char_p, c_ulong, byref, windll, c_buffer, sizeof)
 
 version = "0.1.6"
 
@@ -132,13 +130,22 @@ class Collector():
     def __repr__(self):
         return '<Flyff.Collector %s>' % self.pid
     
-
 def get_process(n):
-    pids = []
-    for proc in process_iter():
-        if proc.name() == n:
-            pids.append(proc.pid)
-    return pids
+    hModule = c_ulong()
+    modname = c_buffer(30)
+    procs = []
+ 
+    for pid in EnumProcesses():
+        hProcess = windll.kernel32.OpenProcess(0x0400 | 0x0010, False, pid)
+        if hProcess:
+            windll.psapi.GetModuleBaseNameA(hProcess, hModule.value, modname, sizeof(modname))
+            if modname.value == n:
+                procs.append(pid)
+            #-- Clean up
+            for i in range(modname._length_):
+                modname[i]='\x00'
+            windll.kernel32.CloseHandle(hProcess)
+    return procs
 
 def push_button(hwnd, key):
     """
